@@ -42,9 +42,10 @@ LINE_USER_ID = os.getenv("LINE_USER_ID", "")
 
 # 戦略パラメータ
 P_SMA_LONG = 200    # 長期トレンド判定用
-P_SMA_SHORT = 5     # 短期トレンド判定用
+P_SMA_SHORT = 3     # 短期トレンド判定用 (最適化により5→3に変更)
 P_RSI = 2           # 短期オシレータ用
 RSI_THRESHOLD = 10  # 超過売られすぎ水準
+STOP_LOSS_PCT = 0.03 # 損切りライン (3%下落)
 
 # 最大保有銘柄数（資金分散）
 MAX_POSITIONS = 5
