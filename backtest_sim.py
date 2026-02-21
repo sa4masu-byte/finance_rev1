@@ -2,16 +2,7 @@ import yfinance as yf
 import pandas as pd
 import numpy as np
 import datetime
-
-# 対象銘柄（流動性の高い大型株メイン TOPIX Core30 相当）
-TICKERS = [
-    "7203.T", "8306.T", "6861.T", "6758.T", "9984.T", 
-    "9432.T", "8058.T", "6920.T", "7974.T", "4063.T",
-    "8316.T", "8031.T", "6501.T", "8001.T", "9433.T",
-    "9983.T", "6098.T", "4502.T", "8766.T", "6902.T",
-    "7011.T", "6702.T", "8411.T", "4568.T", "4519.T",
-    "6502.T", "8002.T", "6146.T", "4543.T", "6954.T"
-]
+from src import config
 
 def calc_rsi(series, period=2):
     delta = series.diff()
@@ -26,8 +17,9 @@ def run_backtest():
     # 検証期間は少し長めに半年とって、直近3ヶ月を評価区間にする
     start_date = end_date - datetime.timedelta(days=365)
     
-    print(f"Fetching data from {start_date} to {end_date}...")
-    data = yf.download(TICKERS, start=start_date, end=end_date, group_by='ticker', progress=False)
+    # 300銘柄のデータ取得
+    print(f"Fetching data from {start_date} to {end_date} for {len(config.TARGET_TICKERS)} tickers...")
+    data = yf.download(config.TARGET_TICKERS, start=start_date, end=end_date, group_by='ticker', progress=False)
     
     # 評価開始日 (約3ヶ月前)
     eval_start_date = pd.to_datetime(end_date - datetime.timedelta(days=90)).tz_localize('Asia/Tokyo')
@@ -41,24 +33,21 @@ def run_backtest():
     positions = {} # ticker: {shares, entry_price, entry_date}
     trade_history = []
     
-    # 日付のリストを取得
     dates = data.index.unique().sort_values()
     dates = [d for d in dates if d >= eval_start_date]
         
-    # 指標の事前計算
     indicators = {}
-    for ticker in TICKERS:
+    for ticker in config.TARGET_TICKERS:
         try:
             df = data[ticker].copy() if isinstance(data.columns, pd.MultiIndex) else data.copy()
             df.dropna(subset=['Close'], inplace=True)
-            if len(df) < 50:
+            if len(df) < config.P_SMA_LONG:
                 continue
-            df['SMA5'] = df['Close'].rolling(5).mean()
-            df['SMA25'] = df['Close'].rolling(25).mean()
-            df['SMA200'] = df['Close'].rolling(200).mean()
-            df['RSI2'] = calc_rsi(df['Close'], 2)
+            df['SMA5'] = df['Close'].rolling(config.P_SMA_SHORT).mean()
+            df['SMA200'] = df['Close'].rolling(config.P_SMA_LONG).mean()
+            df['RSI2'] = calc_rsi(df['Close'], config.P_RSI)
             indicators[ticker] = df
-        except Exception as e:
+        except Exception:
             pass
 
     for today in dates:
@@ -113,16 +102,27 @@ def run_backtest():
                 y_row = df.loc[yesterday]
                 if (y_row['Close'] > y_row['SMA200'] and 
                     y_row['Close'] < y_row['SMA5'] and 
-                    y_row['RSI2'] < 10):
+                    y_row['RSI2'] < config.RSI_THRESHOLD):
                     t_open = df.loc[today, 'Open']
                     if pd.isna(t_open): continue
-                    score = y_row['RSI2']
-                    buy_candidates.append((ticker, t_open, score))
                     
-        buy_candidates.sort(key=lambda x: x[2])
+                    # Score Calculation matching analyzer.py
+                    c_price = y_row['Close']
+                    sma200 = y_row['SMA200']
+                    rsi2 = y_row['RSI2']
+                    
+                    score_rsi = max(0, (config.RSI_THRESHOLD - rsi2) * (50 / config.RSI_THRESHOLD))
+                    trend_diff_pct = ((c_price - sma200) / sma200) * 100
+                    score_trend = min(50, max(0, trend_diff_pct * (50 / 20)))
+                    total_score = round(score_rsi + score_trend, 1)
+                    
+                    buy_candidates.append((ticker, t_open, total_score))
+                    
+        # 高スコア順にソート (降順)
+        buy_candidates.sort(key=lambda x: x[2], reverse=True)
         
         for ticker, t_open, score in buy_candidates:
-            if len(positions) >= 5:
+            if len(positions) >= config.MAX_POSITIONS:
                 break
             
             max_shares_by_rule = int(max_position_size // (t_open * 100)) * 100
@@ -175,6 +175,11 @@ def run_backtest():
         print(f"Win Rate       : {win_rate:.2f}%")
         print(f"Avg Win Return : {avg_win:.2f}%")
         print(f"Avg Loss Return: {avg_loss:.2f}%")
+        print("\n--- Trade History Highlights ---")
+        for t in trade_history[:10]:
+            print(f"{t['entry_date'].strftime('%Y-%m-%d')} BUY {t['ticker']} x{t['shares']} at ¥{t['entry_price']:,.1f} -> {t['exit_date'].strftime('%m-%d')} SELL at ¥{t['exit_price']:,.1f} ({t['return_pct']:.2f}%)")
+        if len(trade_history) > 10:
+            print("... and more.")
     else:
         print("No trades executed.")
         
