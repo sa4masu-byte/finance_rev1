@@ -53,11 +53,10 @@ class LineNotifier:
         
         for i, s in enumerate(top_signals, 1):
             sl_price = int(s.close_price * 0.95) # 推奨損切り（5%下落）
-            msg += f"■ {i}. {s.ticker}\n"
+            msg += f"■ {i}. {s.ticker} ⭐{s.score}点\n"
             msg += f"  終値: {int(s.close_price):,}円\n"
             msg += f"  目安損切り: {sl_price:,}円\n"
-            msg += f"  [指標] RSI(2): {s.rsi2:.1f}\n"
-            msg += f"         SMA(5): {int(s.sma5):,}円\n\n"
+            msg += f"  理由: {s.reason}\n\n"
             
         if len(signals) > config.MAX_POSITIONS:
             msg += f"※他 {len(signals) - config.MAX_POSITIONS} 件のシグナル点灯あり。\n"
