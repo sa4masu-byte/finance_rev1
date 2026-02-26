@@ -40,12 +40,14 @@ TARGET_TICKERS: List[str] = [
 LINE_CHANNEL_ACCESS_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN", "")
 LINE_USER_ID = os.getenv("LINE_USER_ID", "")
 
-# 戦略パラメータ
-P_SMA_LONG = 200    # 長期トレンド判定用
-P_SMA_SHORT = 3     # 短期トレンド判定用 (最適化により5→3に変更)
+# 戦略パラメータ（バックテスト最適化 2026-02-26 結果反映）
+# 戦略A: RSI+SMA — Return 18.26%, WinRate 70.5%, 129 trades
+P_SMA_LONG = 100    # 長期トレンド判定用 (最適化により200→100)
+P_SMA_SHORT = 3     # 短期トレンド判定用
 P_RSI = 2           # 短期オシレータ用
-RSI_THRESHOLD = 10  # 超過売られすぎ水準
-STOP_LOSS_PCT = 0.03 # 損切りライン (3%下落)
+RSI_THRESHOLD = 30  # 売られすぎ水準 (最適化により10→30)
+STOP_LOSS_PCT = 0.08 # 損切りライン (最適化により3%→8%)
+HOLD_DAYS_MAX = 10  # 最大保有日数
 
 # 最大保有銘柄数（資金分散）
 MAX_POSITIONS = 5

@@ -18,7 +18,7 @@ class Signal:
 
 class SwingAnalyzer:
     def __init__(self, tickers: List[str] = config.TARGET_TICKERS):
-        self.tickers = tickers
+        self.tickers = list(dict.fromkeys(tickers))  # 重複除去（順序保持）
         
     def _calc_rsi(self, series: pd.Series, period: int = 2) -> pd.Series:
         delta = series.diff()
@@ -33,7 +33,7 @@ class SwingAnalyzer:
         print("Fetching market data...")
         data = yf.download(
             self.tickers, 
-            period="6mo", 
+            period="1y", 
             group_by='ticker', 
             progress=False,
             auto_adjust=False
@@ -77,29 +77,25 @@ class SwingAnalyzer:
                 rsi2 = latest['RSI2']
                 
                 # シグナル判定条件（Connors RSI + Trend filter）
-                # 1. 200日線より上（全体は上昇トレンド）
-                # 2. 5日線より下（手前は押し目・調整中）
-                # 3. RSI(2)が10未満（極端な売られすぎ）
+                # 1. SMA(100)より上（中期上昇トレンド）
+                # 2. SMA(3)より下（短期押し目・調整中）
+                # 3. RSI(2)が閾値未満（売られすぎ）
                 if c_price > sma200 and c_price < sma5 and rsi2 < config.RSI_THRESHOLD:
                     
                     # 総合スコア(100点満点)の算出
                     # RSIが低い（売られすぎ）ほど高得点: Max 50点
-                    # - 0に近いほど50点、10に近いほど0点
                     score_rsi = max(0, (config.RSI_THRESHOLD - rsi2) * (50 / config.RSI_THRESHOLD))
                     
-                    # 200日線との乖離（トレンドの強さ）ほど高得点: Max 50点
-                    # - 乖離が5%〜20%あたりを適度なトレンドとみなし高く評価。
-                    #   （乖離が大きすぎると過熱からの急落リスクもあるが、ここではシンプルに乖離大きいほどトレンドが強いとする）
+                    # トレンドSMAとの乖離（トレンドの強さ）: Max 50点
                     trend_diff_pct = ((c_price - sma200) / sma200) * 100
-                    # 20%乖離で50点満点とする線形評価
                     score_trend = min(50, max(0, trend_diff_pct * (50 / 20)))
                     
                     total_score = round(score_rsi + score_trend, 1)
                     
                     # 理由の生成
                     reason_text = (
-                        f"短期的な極度の売られすぎ（RSI: {rsi2:.1f}）による強い反発期待に加え、"
-                        f"長期（200日線比 +{trend_diff_pct:.1f}%）の明確な上昇トレンドの押し目であるため。"
+                        f"短期的な売られすぎ（RSI({config.P_RSI}): {rsi2:.1f}）による反発期待に加え、"
+                        f"中長期（{config.P_SMA_LONG}日線比 +{trend_diff_pct:.1f}%）の上昇トレンドの押し目であるため。"
                     )
                     
                     sig = Signal(
@@ -118,6 +114,6 @@ class SwingAnalyzer:
                 print(f"Error analyzing {ticker}: {e}")
                 continue
                 
-        # 総合スコアが高い順（より優位性が高い）にソート
+        # 総合スコアが高い順（より優位性が高い）にソート → 上位MAX_POSITIONSに絞る
         signals.sort(key=lambda x: x.score, reverse=True)
-        return signals
+        return signals[:config.MAX_POSITIONS]

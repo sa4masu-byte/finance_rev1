@@ -20,7 +20,8 @@ def main():
     else:
         print("Dry run complete (no LINE notification sent).")
         for s in signals:
-            print(f"- {s.ticker}: Close={s.close_price:.1f}, RSI(2)={s.rsi2:.1f}")
+            print(f"- {s.ticker}: Close={s.close_price:.1f}, RSI(2)={s.rsi2:.1f}, Score={s.score}")
+            print(f"  → {s.reason}")
 
 if __name__ == "__main__":
     main()
