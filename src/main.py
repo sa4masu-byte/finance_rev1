@@ -20,6 +20,8 @@ def main():
     else:
         print("Dry run complete (no LINE notification sent).")
         for s in signals:
+            if s.special_alert:
+                print(f"🔥🔥【強烈な買いシグナル検出！】🔥🔥\n{s.special_alert}")
             print(f"- {s.ticker}: Close={s.close_price:.1f}, RSI(2)={s.rsi2:.1f}, Score={s.score}")
             print(f"  → {s.reason}")
 

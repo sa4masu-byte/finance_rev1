@@ -53,6 +53,10 @@ class LineNotifier:
         
         for i, s in enumerate(top_signals, 1):
             sl_price = int(s.close_price * (1 - config.STOP_LOSS_PCT)) # 推奨損切り
+            
+            if s.special_alert:
+                msg += f"🔥🔥【強烈な買いシグナル検出！】🔥🔥\n{s.special_alert}\n"
+                
             msg += f"■ {i}. {s.ticker} ⭐{s.score}点\n"
             msg += f"  終値: {int(s.close_price):,}円\n"
             msg += f"  目安損切り: {sl_price:,}円\n"

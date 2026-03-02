@@ -40,14 +40,32 @@ TARGET_TICKERS: List[str] = [
 LINE_CHANNEL_ACCESS_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN", "")
 LINE_USER_ID = os.getenv("LINE_USER_ID", "")
 
-# 戦略パラメータ（バックテスト最適化 2026-02-26 結果反映）
-# 戦略A: RSI+SMA — Return 18.26%, WinRate 70.5%, 129 trades
-P_SMA_LONG = 100    # 長期トレンド判定用 (最適化により200→100)
+# 戦略パラメータ（バックテスト最適化 2026-03-02 結果反映）
+# 戦略A: RSI+SMA — Return 21.65%, WinRate 72.9%, 129 trades
+P_SMA_LONG = 100    # 長期トレンド判定用
 P_SMA_SHORT = 3     # 短期トレンド判定用
 P_RSI = 2           # 短期オシレータ用
-RSI_THRESHOLD = 30  # 売られすぎ水準 (最適化により10→30)
-STOP_LOSS_PCT = 0.08 # 損切りライン (最適化により3%→8%)
+RSI_THRESHOLD = 30  # 売られすぎ水準
+STOP_LOSS_PCT = 0.08 # 損切りライン
 HOLD_DAYS_MAX = 10  # 最大保有日数
 
 # 最大保有銘柄数（資金分散）
 MAX_POSITIONS = 5
+
+# =========================================================
+# 新戦略 (E, F, G) パニック検知・高勝率シグナル用パラメータ
+# (アラート監視用: 統計的異常値による超高確率の反発狙い)
+# =========================================================
+# Strategy E: Price Z-Score
+E_Z_PERIOD = 20
+E_Z_THRESH = -2.5
+
+# Strategy F: Return Z-Score
+F_RET_Z_PERIOD = 50
+F_RET_Z_THRESH = -2.5
+
+# Strategy G: BB %B + HV
+G_BB_PERIOD = 20
+G_BB_STD = 2.5
+G_HV_PERIOD = 20
+G_HV_THRESH = 0.4

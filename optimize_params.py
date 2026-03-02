@@ -45,6 +45,22 @@ def calc_atr(high: pd.Series, low: pd.Series, close: pd.Series, period: int) -> 
     tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
     return tr.rolling(window=period).mean()
 
+def calc_zscore(series: pd.Series, period: int) -> pd.Series:
+    sma = series.rolling(period).mean()
+    std = series.rolling(period).std()
+    return (series - sma) / std
+
+def calc_daily_return_zscore(series: pd.Series, period: int) -> pd.Series:
+    daily_returns = series.pct_change()
+    mean_return = daily_returns.rolling(period).mean()
+    std_return = daily_returns.rolling(period).std()
+    return (daily_returns - mean_return) / std_return
+
+def calc_historical_volatility(series: pd.Series, period: int) -> pd.Series:
+    daily_returns = series.pct_change()
+    # 年率換算なしの単純な期間HV（単位を揃えるため）
+    return daily_returns.rolling(period).std() * np.sqrt(252)
+
 
 # ============================================================
 # データ取得（1回だけ実行）
@@ -346,6 +362,117 @@ STRATEGY_D_GRID = {
 
 
 # ============================================================
+# パターン E: 価格 Z-Score (極端なショック吸収)
+# ============================================================
+def strategy_e_prep(ticker_dfs, z_period, sma_long):
+    result = {}
+    for ticker, df in ticker_dfs.items():
+        if len(df) < sma_long:
+            continue
+        d = df.copy()
+        d['Z_SCORE'] = calc_zscore(d['Close'], z_period)
+        d['SMA_LONG'] = d['Close'].rolling(sma_long).mean()
+        result[ticker] = d
+    return result
+
+def strategy_e_signal(row, params):
+    # Z-Scoreが極端にマイナス && 長期トレンドは上
+    return (row['Close'] > row['SMA_LONG'] and
+            row.get('Z_SCORE', 0) < params['z_thresh'])
+
+def strategy_e_exit(row, pos, days_held, t_open, params):
+    sl_price = pos['entry_price'] * (1 - params['stop_loss'])
+    # Z-Scoreが平均(0)に戻った or 損切り or 日数
+    return (row.get('Z_SCORE', -99) >= 0 or
+            days_held >= params['hold_days'] or
+            t_open <= sl_price)
+
+STRATEGY_E_GRID = {
+    'z_period': [10, 20, 30],
+    'z_thresh': [-2.0, -2.5, -3.0],
+    'sma_long': [100, 200],
+    'stop_loss': [0.05, 0.08, 0.10],
+    'hold_days': [5, 10, 15],
+}
+
+
+# ============================================================
+# パターン F: 日次リターン Z-Score (パニック売り検知)
+# ============================================================
+def strategy_f_prep(ticker_dfs, ret_z_period, sma_long):
+    result = {}
+    for ticker, df in ticker_dfs.items():
+        if len(df) < sma_long:
+            continue
+        d = df.copy()
+        d['RET_ZSCORE'] = calc_daily_return_zscore(d['Close'], ret_z_period)
+        d['SMA_LONG'] = d['Close'].rolling(sma_long).mean()
+        result[ticker] = d
+    return result
+
+def strategy_f_signal(row, params):
+    # 特定の日の下落幅が過去データから見て極端な異常値（-2.5σなど）
+    return (row['Close'] > row['SMA_LONG'] and
+            row.get('RET_ZSCORE', 0) < params['ret_z_thresh'])
+
+def strategy_f_exit(row, pos, days_held, t_open, params):
+    sl_price = pos['entry_price'] * (1 - params['stop_loss'])
+    # パニック売りのリバウンドは非常に早いため、1〜3日で決済
+    return (days_held >= params['hold_days'] or
+            t_open <= sl_price)
+
+STRATEGY_F_GRID = {
+    'ret_z_period': [20, 50, 100],
+    'ret_z_thresh': [-2.5, -3.0, -3.5],
+    'sma_long': [100, 200],
+    'stop_loss': [0.05, 0.08, 0.10],
+    'hold_days': [1, 2, 3, 5],
+}
+
+
+# ============================================================
+# パターン G: ボリンジャー %B + ヒストリカル・ボラティリティ (HV)
+# ============================================================
+def strategy_g_prep(ticker_dfs, bb_period, bb_std, hv_period, sma_long):
+    result = {}
+    for ticker, df in ticker_dfs.items():
+        if len(df) < sma_long:
+            continue
+        d = df.copy()
+        upper, mid, lower = calc_bollinger(d['Close'], bb_period, bb_std)
+        # %B: 0以下なら下限割れ
+        d['BB_PCT_B'] = (d['Close'] - lower) / (upper - lower)
+        d['BB_MID'] = mid
+        d['HV'] = calc_historical_volatility(d['Close'], hv_period)
+        d['SMA_LONG'] = d['Close'].rolling(sma_long).mean()
+        result[ticker] = d
+    return result
+
+def strategy_g_signal(row, params):
+    # HVが低い(相場が穏やか)のに、突然BB下限を割った(%B<0)
+    return (row['Close'] > row['SMA_LONG'] and
+            row.get('HV', 999) < params['hv_thresh'] and
+            row.get('BB_PCT_B', 1.0) < 0.0)
+
+def strategy_g_exit(row, pos, days_held, t_open, params):
+    sl_price = pos['entry_price'] * (1 - params['stop_loss'])
+    # バンド中心線(BB_MID)へ回帰 or 損切り
+    return (row['Close'] >= row.get('BB_MID', row['Close']) or
+            days_held >= params['hold_days'] or
+            t_open <= sl_price)
+
+STRATEGY_G_GRID = {
+    'bb_period': [20, 50],
+    'bb_std': [2.0, 2.5],
+    'hv_period': [20, 50],
+    'hv_thresh': [0.2, 0.3, 0.4], # HVが20%, 30%, 40%未満
+    'sma_long': [100, 200],
+    'stop_loss': [0.05, 0.08, 0.10],
+    'hold_days': [5, 10, 15],
+}
+
+
+# ============================================================
 # メイン：全パターン探索
 # ============================================================
 def run_pattern_a(ticker_dfs, dates):
@@ -446,6 +573,84 @@ def run_pattern_d(ticker_dfs, dates):
     return results
 
 
+def run_pattern_e(ticker_dfs, dates):
+    grid = STRATEGY_E_GRID
+    keys = list(grid.keys())
+    combos = list(itertools.product(*[grid[k] for k in keys]))
+    print(f"\n[Pattern E] Price Z-Score: {len(combos)} combinations")
+
+    results = []
+    cache = {}
+    for i, vals in enumerate(combos):
+        p = dict(zip(keys, vals))
+        cache_key = (p['z_period'], p['sma_long'])
+        if cache_key not in cache:
+            cache[cache_key] = strategy_e_prep(ticker_dfs, p['z_period'], p['sma_long'])
+        indicators = cache[cache_key]
+
+        res = run_backtest(indicators, dates, strategy_e_signal, strategy_e_exit, p)
+        res['params'] = p
+        res['strategy'] = 'E: Price Z-Score'
+        results.append(res)
+        
+        if (i + 1) % 100 == 0:
+            print(f"  {i+1}/{len(combos)} done...")
+
+    return results
+
+
+def run_pattern_f(ticker_dfs, dates):
+    grid = STRATEGY_F_GRID
+    keys = list(grid.keys())
+    combos = list(itertools.product(*[grid[k] for k in keys]))
+    print(f"\n[Pattern F] Return Z-Score: {len(combos)} combinations")
+
+    results = []
+    cache = {}
+    for i, vals in enumerate(combos):
+        p = dict(zip(keys, vals))
+        cache_key = (p['ret_z_period'], p['sma_long'])
+        if cache_key not in cache:
+            cache[cache_key] = strategy_f_prep(ticker_dfs, p['ret_z_period'], p['sma_long'])
+        indicators = cache[cache_key]
+
+        res = run_backtest(indicators, dates, strategy_f_signal, strategy_f_exit, p)
+        res['params'] = p
+        res['strategy'] = 'F: Return Z-Score'
+        results.append(res)
+        
+        if (i + 1) % 100 == 0:
+            print(f"  {i+1}/{len(combos)} done...")
+
+    return results
+
+
+def run_pattern_g(ticker_dfs, dates):
+    grid = STRATEGY_G_GRID
+    keys = list(grid.keys())
+    combos = list(itertools.product(*[grid[k] for k in keys]))
+    print(f"\n[Pattern G] BB %B + HV: {len(combos)} combinations")
+
+    results = []
+    cache = {}
+    for i, vals in enumerate(combos):
+        p = dict(zip(keys, vals))
+        cache_key = (p['bb_period'], p['bb_std'], p['hv_period'], p['sma_long'])
+        if cache_key not in cache:
+            cache[cache_key] = strategy_g_prep(ticker_dfs, p['bb_period'], p['bb_std'], p['hv_period'], p['sma_long'])
+        indicators = cache[cache_key]
+
+        res = run_backtest(indicators, dates, strategy_g_signal, strategy_g_exit, p)
+        res['params'] = p
+        res['strategy'] = 'G: BB %B + HV'
+        results.append(res)
+        
+        if (i + 1) % 100 == 0:
+            print(f"  {i+1}/{len(combos)} done...")
+
+    return results
+
+
 def main():
     t0 = time.time()
     ticker_dfs, dates = fetch_data()
@@ -455,6 +660,9 @@ def main():
     all_results.extend(run_pattern_b(ticker_dfs, dates))
     all_results.extend(run_pattern_c(ticker_dfs, dates))
     all_results.extend(run_pattern_d(ticker_dfs, dates))
+    all_results.extend(run_pattern_e(ticker_dfs, dates))
+    all_results.extend(run_pattern_f(ticker_dfs, dates))
+    all_results.extend(run_pattern_g(ticker_dfs, dates))
 
     elapsed = time.time() - t0
     print(f"\n{'='*70}")
@@ -462,7 +670,10 @@ def main():
     print(f"{'='*70}")
 
     # 各パターンの最良結果
-    strategies = ['A: RSI+SMA', 'B: MACD', 'C: BB+RSI', 'D: ATR+RSI']
+    strategies = [
+        'A: RSI+SMA', 'B: MACD', 'C: BB+RSI', 'D: ATR+RSI',
+        'E: Price Z-Score', 'F: Return Z-Score', 'G: BB %B + HV'
+    ]
     print("\n=== Best per Strategy ===")
     best_per_strategy = []
     for s in strategies:
